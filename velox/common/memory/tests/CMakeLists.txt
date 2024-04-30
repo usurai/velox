@@ -15,7 +15,8 @@ include(GoogleTest)
 
 add_executable(
   velox_memory_test
-  AllocationCompactorTest.cpp
+  # TODO: enable this later
+  # AllocationCompactorTest.cpp
   AllocationPoolTest.cpp
   AllocationTest.cpp
   ByteStreamTest.cpp

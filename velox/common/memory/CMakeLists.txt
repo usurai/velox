@@ -18,6 +18,7 @@ endif()
 add_library(
   velox_memory
   Allocation.cpp
+  AllocationCompactor.cpp
   AllocationPool.cpp
   ByteStream.cpp
   HashStringAllocator.cpp

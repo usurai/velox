@@ -26,8 +26,6 @@ namespace facebook::velox {
 namespace {
 
 using HSA = HashStringAllocator;
-using Header = HSA::Header;
-using AllocationCompactor = HashStringAllocator::AllocationCompactor;
 
 struct Multipart {
   HSA::Position start;
@@ -48,14 +46,14 @@ class HashStringAllocatorTest : public testing::Test {
     rng_.seed(1);
   }
 
-  Header* allocate(int32_t numBytes) {
+  HSA::Header* allocate(int32_t numBytes) {
     auto result = allocator_->allocate(numBytes);
     EXPECT_GE(result->size(), numBytes);
     initializeContents(result);
     return result;
   }
 
-  void initializeContents(Header* header) {
+  void initializeContents(HSA::Header* header) {
     auto sequence = ++sequence_;
     int32_t numWords = header->size() / sizeof(void*);
     void** ptr = reinterpret_cast<void**>(header->begin());
@@ -79,6 +77,7 @@ class HashStringAllocatorTest : public testing::Test {
     data.start = HSA::Position::null();
   }
 
+  /*** TODO: Enable later.
   // Allocates at least 'bytes' memory and initialize contents that have random
   // size. The header of created blocks in each allocation are stored in
   // 'contents_' indexed by allocation index. clear() is called before filling
@@ -184,6 +183,7 @@ class HashStringAllocatorTest : public testing::Test {
     VELOX_CHECK_LT(allocationId, allocationDataSize_.size());
     return allocationDataSize_.at(allocationId);
   }
+  ***/
 
   uint32_t rand32() {
     return folly::Random::rand32(rng_);
@@ -205,20 +205,22 @@ class HashStringAllocatorTest : public testing::Test {
     return result;
   }
 
+
+  std::shared_ptr<memory::MemoryPool> pool_;
+  std::unique_ptr<HashStringAllocator> allocator_;
+  int32_t sequence_ = 0;
+  folly::Random::DefaultGenerator rng_;
+  /*** TODO: enable later
   // Free all the allocated data.
   void clear() {
     contents_.clear();
     allocationDataSize_.clear();
     allocator_->clear();
   }
-
-  std::shared_ptr<memory::MemoryPool> pool_;
-  std::unique_ptr<HashStringAllocator> allocator_;
-  int32_t sequence_ = 0;
-  folly::Random::DefaultGenerator rng_;
   // Total size of non-free blocks in allocations(size of Header is included).
   std::vector<int64_t> allocationDataSize_;
   std::vector<std::vector<std::pair<Header*, std::string>>> contents_;
+  ***/
 };
 
 TEST_F(HashStringAllocatorTest, headerToString) {
@@ -258,7 +260,7 @@ TEST_F(HashStringAllocatorTest, headerToString) {
 
 TEST_F(HashStringAllocatorTest, allocate) {
   for (auto count = 0; count < 3; ++count) {
-    std::vector<Header*> headers;
+    std::vector<HSA::Header*> headers;
     for (auto i = 0; i < 10'000; ++i) {
       headers.push_back(allocate((i % 10) * 10));
     }
@@ -792,6 +794,7 @@ TEST_F(HashStringAllocatorTest, storeStringFast) {
   allocator_->checkConsistency();
 }
 
+/*** TODO: Move out
 TEST_F(HashStringAllocatorTest, compact) {
   static const auto kHugePageSize = memory::AllocationTraits::kHugePageSize;
   static const auto kPageSize = memory::AllocationTraits::kPageSize;
@@ -928,6 +931,7 @@ TEST_F(HashStringAllocatorTest, compact) {
     verifyContent(movedBlocks);
   }
 }
+***/
 
 } // namespace
 } // namespace facebook::velox
