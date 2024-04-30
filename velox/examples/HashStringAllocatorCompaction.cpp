@@ -40,7 +40,7 @@ void fillAllocation(
 
   int64_t bytesAllocated{0};
   while (bytesAllocated < bytes) {
-    const auto size = 16 + (rand32() % (128 - 16));
+    const auto size = 16 + (rand32() % (HashStringAllocator::kMaxAlloc - 16));
     auto header = hsa->allocate(size);
     assert(!header->isFree());
     assert(!header->isContinued());
@@ -124,7 +124,13 @@ void verifyContent(
   }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+  if (argc != 2) {
+    LOG(ERROR) << "Usage: " << argv[0] << " [data size to fill in MB].";
+    return 1;
+  }
+  const size_t payloadSize = (1LL << 20) * std::atoi(argv[1]);
+
   // TODO: use velox_check
   memory::MemoryManager::initialize({});
   // TODO: lifetime
@@ -138,10 +144,9 @@ int main() {
   // Total data size (header size + payload size) of each allocation.
   std::vector<size_t> allocationsDataSize;
 
-  constexpr size_t payloadSize = 1LL << 31;
-  // Fills >= 'payloadSize' bytes of random generated data into memory allocated
-  // via HSA.
-  LOG(INFO) << "Filling not less than " << payloadSize << " bytes to data...";
+  // Fills at least 'payloadSize' bytes of random generated data into memory
+  // allocated via HSA.
+  LOG(INFO) << "Filling not less than " << payloadSize << " bytes of data...";
   fillAllocation(hsa.get(), payloadSize, payloads, allocationsDataSize);
   if (allocationsDataSize.size() <= 1) {
     LOG(ERROR)
@@ -163,7 +168,7 @@ int main() {
   }
   LOG(INFO) << "Freed " << totalFreed << " bytes in total.";
 
-  AllocationCompactionStrategy compactor(hsa.get());
+  HashStringAllocatorCompactor compactor(hsa.get());
   hsa->allowSplittingContiguous();
   const auto estimatedReclaimable = compactor.estimateReclaimableSize();
   LOG(INFO) << "Estimated reclaimable data size:" << estimatedReclaimable;
@@ -181,9 +186,8 @@ int main() {
 
   LOG(INFO) << "Starting to verify payload...";
   verifyContent(payloads, updatedBlocks);
-  LOG(INFO) << "Verification done.";
-
   assert(compactor.estimateReclaimableSize() == 0);
+  LOG(INFO) << "Verification done.";
 
   return 0;
 }
