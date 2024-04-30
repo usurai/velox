@@ -20,13 +20,11 @@
 
 namespace facebook::velox {
 
-// TODO
-using Header = HashStringAllocator::Header;
-
 // Provides some helper functionalities for compacting an allocation.
 class AllocationCompactor {
  public:
   using AllocationRange = folly::Range<char*>;
+  using Header = HashStringAllocator::Header;
   using HeaderMap = folly::F14FastMap<Header*, Header*>;
 
   static constexpr auto kHugePageSize = memory::AllocationTraits::kHugePageSize;
@@ -172,42 +170,6 @@ class AllocationCompactor {
   bool reclaimable_{false};
   // Sum of Non-free block size in this allocation(header included).
   int64_t nonFreeBlockSize_{0};
-};
-
-class AllocationCompactionStrategy {
- public:
-  explicit AllocationCompactionStrategy(HashStringAllocator* hsa)
-      : hsa_(hsa), pool_(&hsa->allocationPool()) {}
-
-  /// Estimates reclaimale memory size by identifying reclaimable allocations.
-  /// Builds 'compactors_' for each allocation except the last one. Returns 0 if
-  /// no allocation is reclaimable or if contiguous memory has been explicitly
-  /// requested and 'allowSplittingContiguous_' is false.
-  int64_t estimateReclaimableSize();
-
-  /// Compacts owned memory by squeezing unreclaimable allocations and
-  /// relocating data from reclaimable allocations to unreclaimable allocations.
-  /// Reclaimable allocations are then freed to AllocationPool. Returns the
-  /// bytes freed and the mapping from original pointer of the moved blocks'
-  /// header to their new pointer.
-  std::pair<int64_t, folly::F14FastMap<Header*, Header*>> compact();
-
- private:
-  void clearFreeList();
-
-  size_t moveBlocksInReclaimableAllocations(std::queue<Header*> destBlocks);
-
-  void checkFreeListInCurrentRange() const;
-
-  void addFreeBlocksToFreeList();
-
-  HashStringAllocator* hsa_;
-  const memory::AllocationPool* pool_;
-  std::vector<AllocationCompactor> compactors_;
-  AllocationCompactor::HeaderMap movedBlocks_;
-  // Maps from the header of succeeding block to the header of preceeding block
-  // of all the multipart blocks.
-  AllocationCompactor::HeaderMap multipartMap_;
 };
 
 } // namespace facebook::velox

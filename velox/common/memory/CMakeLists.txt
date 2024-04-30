@@ -22,6 +22,7 @@ add_library(
   AllocationPool.cpp
   ByteStream.cpp
   HashStringAllocator.cpp
+  HashStringAllocatorCompactor.cpp
   MallocAllocator.cpp
   Memory.cpp
   MemoryAllocator.cpp

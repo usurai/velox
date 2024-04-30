@@ -2,7 +2,7 @@
 #include <cassert>
 #include <chrono>
 
-#include "velox/common/memory/AllocationCompactor.h"
+#include "velox/common/memory/HashStringAllocatorCompactor.h"
 
 using namespace facebook::velox;
 

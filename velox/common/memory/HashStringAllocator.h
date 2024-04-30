@@ -447,7 +447,7 @@ class HashStringAllocator : public StreamArena {
   // allocated memory when doing memory compaction.
   bool allowSplittingContiguous_{false};
 
-  friend class AllocationCompactionStrategy;
+  friend class HashStringAllocatorCompactor;
 };
 
 // Utility for keeping track of allocation between two points in
