@@ -41,11 +41,11 @@ class AllocationCompactor {
   /// min(destSize-kMinBlockSize-kContinuedPtrSize, srcSize-kMinAlloc) <
   /// kMinAlloc-kContinuedPtrSize.
   /// 2. destSize < srcSize < destSize+kMinAlloc-kContinuedPtrSize, and
-  /// destSize < kMinBlockSize+kMinAlloc. In the above cases, src block cannot
-  /// fit into dest block directly, and when splitting it, the result cannot
-  /// forms the valid blocks. So we can only skip the dest block. The largest
-  /// size of the dest block satisfies the above cases are of the size of
-  /// 'kReservationPerArena'.
+  /// destSize < kMinBlockSize+kMinAlloc.
+  /// In the above cases, src block cannot fit into dest block directly, and
+  /// when splitting it, the result cannot forms the valid blocks. So we can
+  /// only skip the dest block. The largest size of the dest block satisfies the
+  /// above cases are of the size of 'kReservationPerArena'.
   static constexpr int64_t kReservationPerArena =
       sizeof(Header) + 2 * HashStringAllocator::kMinAlloc + kMinBlockSize;
 
@@ -193,12 +193,21 @@ class AllocationCompactionStrategy {
   std::pair<int64_t, folly::F14FastMap<Header*, Header*>> compact();
 
  private:
-  void testCheckFreeInCurrentRange() const;
+  void clearFreeList();
+
+  size_t moveBlocksInReclaimableAllocations(std::queue<Header*> destBlocks);
+
+  void checkFreeListInCurrentRange() const;
+
   void addFreeBlocksToFreeList();
 
   HashStringAllocator* hsa_;
   const memory::AllocationPool* pool_;
   std::vector<AllocationCompactor> compactors_;
+  AllocationCompactor::HeaderMap movedBlocks_;
+  // Maps from the header of succeeding block to the header of preceeding block
+  // of all the multipart blocks.
+  AllocationCompactor::HeaderMap multipartMap_;
 };
 
 } // namespace facebook::velox

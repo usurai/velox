@@ -91,16 +91,14 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
   compactors_.clear();
   compactors_.reserve(allocations);
 
-  // TODO naming: SortableEntry -> AllocationState
-  struct SortableEntry {
+  struct AllocationState {
     int64_t size;
     int64_t nonFreeBlockSize;
     int32_t allocationIndex;
   };
-  std::vector<SortableEntry> entries;
+  std::vector<AllocationState> entries;
   entries.reserve(allocations);
 
-  // TODO naming: usable -> free
   int64_t remainingUsableSize{0};
   int64_t totalNonFreeBlockSize{0};
   for (auto i = 0; i < allocations; ++i) {
@@ -109,7 +107,7 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
     remainingUsableSize += compactor.usableSize();
     totalNonFreeBlockSize += compactor.nonFreeBlockSize();
     entries.push_back(
-        SortableEntry{compactor.size(), compactor.nonFreeBlockSize(), i});
+        AllocationState{compactor.size(), compactor.nonFreeBlockSize(), i});
   }
 
   // Priority is given to allocations with larger sizes. When allocations have
@@ -117,7 +115,7 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
   std::sort(
       entries.begin(),
       entries.end(),
-      [](const SortableEntry& lhs, const SortableEntry& rhs) {
+      [](const AllocationState& lhs, const AllocationState& rhs) {
         if (lhs.size == rhs.size) {
           return lhs.nonFreeBlockSize < rhs.nonFreeBlockSize;
         }
@@ -139,33 +137,63 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
 // TODO: Update cumulativeBytes_.
 std::pair<int64_t, folly::F14FastMap<Header*, Header*>>
 AllocationCompactionStrategy::compact() {
-  // TODO: move ac into hsa.
-  using AC = AllocationCompactor;
-
-  // TODO: If this is necessary.
+  // Redo the estimation to ensure 'compactors_' are up-to-date.
   if (estimateReclaimableSize() == 0) {
     return {0, {}};
   }
 
-  AC::HeaderMap movedBlocks;
-  // TODO: who points to who
-  AC::HeaderMap multipartMap;
-  // Accumulate multipart map from all alloctions.
   for (const auto& compactor : compactors_) {
-    compactor.accumulateMultipartMap(multipartMap);
+    compactor.accumulateMultipartMap(multipartMap_);
   }
 
-  // TODO: below is
-  // 1. remove free blocks from free list
-  // 2. compact unreclaimable allocations and collect free blocks
+  // Remove all the free blocks in candidate allocations from free list since:
+  // 1. Reclaimable allocations will be freed to AllocationPool;
+  // 2. Unreclaimable allocations's free blocks will be squeezed, at the
+  // end of the compaction the remaining free blocks will be added back to
+  // free list.
+  clearFreeList();
+
+  // Compact unreclaimable allocations and collect free blocks.
   std::queue<Header*> destBlocks;
   for (auto& compactor : compactors_) {
-    // Remove all the free blocks in candidate allocations from free list since:
-    // 1. Reclaimable allocations will be freed to AllocationPool;
-    // 2. Unreclaimable allocations's free blocks will be squeezed, at the
-    // end of the compaction the remaining free blocks will be added back to
-    // free list.
-    // TODO: consider move into AC
+    // Squeeze unreclaimable allocations, whose remaining free blocks will be
+    // the destination blocks for the compaction.
+    if (compactor.isReclaimable()) {
+      continue;
+    }
+    auto freeBlocks = compactor.squeeze(multipartMap_, movedBlocks_);
+    for (auto* freeBlock : freeBlocks) {
+      destBlocks.push(freeBlock);
+    }
+  }
+
+  const auto compactedSize =
+      moveBlocksInReclaimableAllocations(std::move(destBlocks));
+
+  // Check free list has only block in the last allocation, which was excluded
+  // from compaction.
+  checkFreeListInCurrentRange();
+  // Add free blocks in the unreclaimable allocations to free list after moving
+  // the blocks.
+  addFreeBlocksToFreeList();
+
+  // Free empty allocations.
+  for (int32_t i = compactors_.size() - 1; i >= 0; --i) {
+    if (compactors_[i].isReclaimable()) {
+      LOG(INFO) << "Freeing allocation " << i << " with size of "
+                << compactors_[i].size();
+      hsa_->pool_.freeRangeAt(i);
+    }
+  }
+  compactors_.clear();
+
+  hsa_->checkConsistency();
+  return {compactedSize, std::move(movedBlocks_)};
+};
+
+// Remove all the free blocks in candidate allocations from free list.
+void AllocationCompactionStrategy::clearFreeList() {
+  for (auto& compactor : compactors_) {
     compactor.foreachBlock([&](Header* header) {
       if (header->isFree()) {
         hsa_->removeFromFreeList(header);
@@ -174,26 +202,18 @@ AllocationCompactionStrategy::compact() {
         hsa_->freeBytes_ -= sizeof(Header) + header->size();
       }
     });
-
-    // Squeeze unreclaimable allocations, whose remaining free blocks will be
-    // the destination blocks for the compaction.
-    if (!compactor.isReclaimable()) {
-      auto freeBlocks = compactor.squeeze(multipartMap, movedBlocks);
-      for (auto* freeBlock : freeBlocks) {
-        destBlocks.push(freeBlock);
-      }
-    }
   }
+}
 
-  // TODO: below is moving reclaimale allocations' blocks to 'destBlocks'.
-  int64_t compactedSize{0};
+size_t AllocationCompactionStrategy::moveBlocksInReclaimableAllocations(
+    std::queue<Header*> destBlocks) {
+  size_t compactedSize{0};
   Header* destBlock{nullptr};
   for (auto& compactor : compactors_) {
     if (!compactor.isReclaimable()) {
       continue;
     }
-
-    auto srcBlock = compactor.nextBlock(false);
+    auto srcBlock = compactor.nextBlock(false /* isFree */);
     int64_t srcOffset{0};
     Header** prevContPtr{nullptr};
     while (srcBlock != nullptr) {
@@ -205,13 +225,13 @@ AllocationCompactionStrategy::compact() {
 
       VELOX_CHECK_EQ((srcOffset == 0), (prevContPtr == nullptr));
       // TODO: consider std::tie
-      auto moveResult = AC::moveBlock(
+      auto moveResult = AllocationCompactor::moveBlock(
           srcBlock,
           srcOffset,
           prevContPtr,
           destBlock,
-          multipartMap,
-          movedBlocks);
+          multipartMap_,
+          movedBlocks_);
       srcOffset += moveResult.srcMovedSize;
       if (moveResult.prevContPtr != nullptr) {
         VELOX_CHECK_GT(moveResult.srcMovedSize, 0);
@@ -227,25 +247,10 @@ AllocationCompactionStrategy::compact() {
     }
     compactedSize += compactor.size();
   }
+  return compactedSize;
+}
 
-  testCheckFreeInCurrentRange();
-  addFreeBlocksToFreeList();
-
-  // Free empty allocations.
-  for (int32_t i = compactors_.size() - 1; i >= 0; --i) {
-    if (compactors_[i].isReclaimable()) {
-      LOG(INFO) << "Freeing allocation " << i << " with size of "
-                << compactors_[i].size();
-      hsa_->pool_.freeRangeAt(i);
-    }
-  }
-  compactors_.clear();
-
-  hsa_->checkConsistency();
-  return {compactedSize, movedBlocks};
-};
-
-void AllocationCompactionStrategy::testCheckFreeInCurrentRange() const {
+void AllocationCompactionStrategy::checkFreeListInCurrentRange() const {
   for (auto i = 0; i < HashStringAllocator::kNumFreeLists; ++i) {
     auto* item = hsa_->free_[i].next();
     while (item != &hsa_->free_[i]) {
