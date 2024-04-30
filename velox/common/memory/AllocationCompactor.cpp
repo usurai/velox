@@ -84,7 +84,7 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
 
   // The last allocation is excluded from the compaction since it's currently in
   // use for serving allocations.
-  const auto allocations{pool_->numRanges() - 1};
+  const auto allocations{hsa_->pool_.numRanges() - 1};
   if (allocations == 0) {
     return 0;
   }
@@ -104,7 +104,7 @@ int64_t AllocationCompactionStrategy::estimateReclaimableSize() {
   int64_t remainingUsableSize{0};
   int64_t totalNonFreeBlockSize{0};
   for (auto i = 0; i < allocations; ++i) {
-    compactors_.emplace_back(pool_->rangeAt(i));
+    compactors_.emplace_back(hsa_->pool_.rangeAt(i));
     const auto& compactor{compactors_.back()};
     remainingUsableSize += compactor.usableSize();
     totalNonFreeBlockSize += compactor.nonFreeBlockSize();
@@ -234,7 +234,9 @@ AllocationCompactionStrategy::compact() {
   // Free empty allocations.
   for (int32_t i = compactors_.size() - 1; i >= 0; --i) {
     if (compactors_[i].isReclaimable()) {
-      pool_->freeRangeAt(i);
+      LOG(INFO) << "Freeing allocation " << i << " with size of "
+                << compactors_[i].size();
+      hsa_->pool_.freeRangeAt(i);
     }
   }
   compactors_.clear();
@@ -248,7 +250,7 @@ void AllocationCompactionStrategy::testCheckFreeInCurrentRange() const {
     auto* item = hsa_->free_[i].next();
     while (item != &hsa_->free_[i]) {
       auto header = HashStringAllocator::headerOf(item);
-      VELOX_CHECK(pool_->isInCurrentRange(header));
+      VELOX_CHECK(hsa_->pool_.isInCurrentRange(header));
       item = item->next();
     }
   }
@@ -264,7 +266,7 @@ void AllocationCompactionStrategy::addFreeBlocksToFreeList() {
         return;
       }
       header->clearFree();
-      free(header);
+      hsa_->free(header);
     });
   }
 }
@@ -500,8 +502,8 @@ AllocationCompactor::MoveResult AllocationCompactor::moveBlock(
 
   // Determine move size.
   const auto bytesToMove{srcBlock->size() - srcOffset};
-  auto movableSize =
-      detail::tryAccommodate(destBlock->size(), bytesToMove, srcBlock->isContinued());
+  auto movableSize = detail::tryAccommodate(
+      destBlock->size(), bytesToMove, srcBlock->isContinued());
   if (movableSize == 0) {
     VELOX_CHECK(srcBlock->isContinued());
     return {0, prevContPtr, nullptr, destBlock->size()};

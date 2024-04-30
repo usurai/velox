@@ -176,6 +176,9 @@ class AllocationCompactor {
 
 class AllocationCompactionStrategy {
  public:
+  explicit AllocationCompactionStrategy(HashStringAllocator* hsa)
+      : hsa_(hsa), pool_(&hsa->allocationPool()) {}
+
   /// Estimates reclaimale memory size by identifying reclaimable allocations.
   /// Builds 'compactors_' for each allocation except the last one. Returns 0 if
   /// no allocation is reclaimable or if contiguous memory has been explicitly
@@ -194,7 +197,7 @@ class AllocationCompactionStrategy {
   void addFreeBlocksToFreeList();
 
   HashStringAllocator* hsa_;
-  memory::AllocationPool* pool_;
+  const memory::AllocationPool* pool_;
   std::vector<AllocationCompactor> compactors_;
 };
 
