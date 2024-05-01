@@ -83,11 +83,13 @@ void AllocationPool::freeRangeAt(int32_t index) {
     largeAllocations_.erase(
         largeAllocations_.begin() + index - allocations_.size());
     usedBytes_ -= alloc.size();
-  } else {
-    auto alloc = std::move(allocations_[index]);
-    allocations_.erase(allocations_.begin() + index);
-    usedBytes_ -= alloc.runAt(0).numBytes();
+    pool_->freeContiguous(alloc);
+    return;
   }
+  auto alloc = std::move(allocations_[index]);
+  allocations_.erase(allocations_.begin() + index);
+  usedBytes_ -= alloc.runAt(0).numBytes();
+  pool_->freeNonContiguous(alloc);
 }
 
 void AllocationPool::maybeGrowLastAllocation(uint64_t bytesRequested) {
